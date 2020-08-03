@@ -1,0 +1,16 @@
+{
+    "name":"dottwatson/fpdo",
+    "description" :"easly query and join flat files in josn, array or csv format",
+    "type": "library",
+    "keywords": ["json","csv","array","pdo","flatfile","query"],
+    "license": "MIT",
+    
+    "require": {
+         "dottwatson/collery":">=1.0"
+    },
+    "autoload": {
+        "psr-4": {
+          "Fpdo\\": "src/"
+        }
+    }
+}
