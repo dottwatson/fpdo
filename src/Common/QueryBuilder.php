@@ -16,6 +16,7 @@ class QueryBuilder extends Collery{
     protected $then;
 
     
+
     /**
      * getting prepared data
      * This overrides the original prepare method to apply joins rules and
@@ -30,26 +31,31 @@ class QueryBuilder extends Collery{
         $originalSortings   = $this->sorters;
         $this->sorters      = [];
         
+        //if no select, select all first level items in the array
+        if(!$this->select){
+            $this->select = '*';
+        }
+        
         parent::prepare();
+        
         $data = $this->resultSet;
 
         if($data && $this->joinerResources && $this->resolvedJoins == false){
             $resultData = [];
-            foreach($data as $k=>$result){
+            foreach($data as $result){
                 //assuming the record is able to be included in the resultset
                 $allowed = true;
 
                 foreach($this->joinerResources as $tableName=>$tableInfo){
-                    
                     foreach($tableInfo['rules'] as $ruleGroup){
                         //create a query from static dataset based on table data
-                        $joinedDataQuery = new static($tableInfo['data']);
+                        $joinedQueryBuilder = new static($tableInfo['data'],$this->separator);
 
                         //apply on joined table the rules (where etc...)
-                        call_user_func_array($ruleGroup['closure'],[$joinedDataQuery,$result]);
+                        call_user_func_array($ruleGroup['closure'],[$joinedQueryBuilder,$result]);
                     
                         //execute query
-                        $joinedDataResults = $joinedDataQuery->get();
+                        $joinedDataResults = $joinedQueryBuilder->get();
 
                         //if is left join or join with return data
                         if( $ruleGroup['isLeftJoin'] || (!$ruleGroup['isLeftJoin'] &&  count($joinedDataResults) > 0) ){
@@ -255,7 +261,6 @@ class QueryBuilder extends Collery{
             $tableData = Resource::acquire($resourceArray[1]);
         }
         
-
         if(isset($this->joinerResources[$tableName])){
             throw new QueryBuilderException("{$tableName} is already used as alias");
         }
