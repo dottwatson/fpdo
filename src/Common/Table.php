@@ -21,26 +21,49 @@ class Table{
      */
     protected $data;
 
+    /**
+     * The table type
+     *
+     * @var string
+     */
     protected $type;
 
+    /**
+     * The table options
+     *
+     * @var array
+     */
     protected $options = [];
+
+    /**
+     * The query builder array keys separator
+     *
+     * @var string
+     */
+    protected $separator = '.';
 
     /**
      * constructor
      *
      * @param string $tableName
      * @param mixed $data
+     * @param string $type
+     * @param string|array $options
      */
-    public function __construct(string $tableName,DataParser $parser,string $type=null,array $options = []){
+    public function __construct(string $tableName,DataParser $parser,string $type=null,$options = []){
         $this->name     = $tableName;
-
         $this->data     = $parser->getData();
-        $this->optiosn  = $options;
 
         if(!is_null($type)){
             $this->type = $type;
         }
 
+        if(is_string($options)){
+            $this->separator = $options;
+        }
+        elseif(is_iterable($options)){
+            $this->options  = $options;
+        }
     }
 
     /**
@@ -61,6 +84,11 @@ class Table{
         return [
             "{$this->getName()}"=>$this->data
         ];
+    }
+
+
+    public function getSeparator(){
+        return $this->delimiter;
     }
 }
 

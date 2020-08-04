@@ -22,10 +22,10 @@ class Fpdo{
      *
      * @param string $tableName
      * @param mixed $data
-     * @param array $options
+     * @param string $options
      * @return Table
      */
-    public static function jsonTable(string $tableName,$data = [],array $options = []){
+    public static function jsonTable(string $tableName,$data = [],$options = '.'){
         return self::table($tableName,$data,self::FPDO_JSON_FORMAT,$options);
     }
 
@@ -46,10 +46,10 @@ class Fpdo{
      *
      * @param string $tableName
      * @param mixed $data
-     * @param array $options
+     * @param array|string $options
      * @return Table
      */
-    public static function xmlTable(string $tableName,$data = [],array $options = []){
+    public static function xmlTable(string $tableName,$data = [],string $options = '.'){
         return self::table($tableName,$data,self::FPDO_XML_FORMAT,$options);
     }
 
@@ -58,10 +58,10 @@ class Fpdo{
      *
      * @param string $tableName
      * @param mixed $data
-     * @param array $options
+     * @param string $options
      * @return Table
      */
-    public static function arrayTable(string $tableName,$data = [],array $options = []){
+    public static function arrayTable(string $tableName,$data = [],$options = '.'){
         return self::table($tableName,$data,self::FPDO_ARRAY_FORMAT,$options);
     }
 
@@ -71,10 +71,10 @@ class Fpdo{
      * @param string $tableName
      * @param mixed $data
      * @param string $type the type of source
-     * @param array $options
+     * @param string|array $options
      * @return Table
      */
-    public static function table(string $tableName,$data = [],string $type=null,array $options = []){
+    public static function table(string $tableName,$data = [],string $type=null,$options = []){
         switch($type){
             case self::FPDO_JSON_FORMAT:
                 $tableData = new JsonParser($data,$options);
@@ -101,15 +101,16 @@ class Fpdo{
      * @param mixed $subject
      * @return QueryBuilder
      */
-    public static function from($subject){
+    public static function from($subject,$separator = '.'){
         if(is_object($subject) && is_a($subject,Table::class)){
             $tableData = $subject->getData();
+            $separator = $subject->getSeparator();
         }
         else{
             $tableData = Resource::acquire($subject);
         }
         
-        $builder = new QueryBuilder($tableData);
+        $builder = new QueryBuilder($tableData,$separator);
 
         return $builder;
     }
