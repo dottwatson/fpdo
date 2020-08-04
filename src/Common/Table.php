@@ -88,7 +88,7 @@ class Table{
 
 
     public function getSeparator(){
-        return $this->delimiter;
+        return $this->separator;
     }
 }
 
