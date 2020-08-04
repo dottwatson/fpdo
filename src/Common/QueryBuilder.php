@@ -49,7 +49,7 @@ class QueryBuilder extends Collery{
                 foreach($this->joinerResources as $tableName=>$tableInfo){
                     foreach($tableInfo['rules'] as $ruleGroup){
                         //create a query from static dataset based on table data
-                        $joinedQueryBuilder = new static($tableInfo['data'],$this->separator);
+                        $joinedQueryBuilder = new static($tableInfo['data'],$tableInfo['separator']);
 
                         //apply on joined table the rules (where etc...)
                         call_user_func_array($ruleGroup['closure'],[$joinedQueryBuilder,$result]);
@@ -59,7 +59,7 @@ class QueryBuilder extends Collery{
 
                         //if is left join or join with return data
                         if( $ruleGroup['isLeftJoin'] || (!$ruleGroup['isLeftJoin'] &&  count($joinedDataResults) > 0) ){
-                            $result = $this->extendDataJoin($tableName,$result,$joinedDataResults);
+                            $result = $this->extendDataJoin($tableName,$result,$joinedDataResults,$tableInfo['separator']);
                         }
                         else{
                             $allowed = false;
@@ -137,13 +137,14 @@ class QueryBuilder extends Collery{
      * @param string $tableName
      * @param array $resultData
      * @param array $joinedData
+     * @param string $separator
      * @return array
      */
-    protected function extendDataJoin($tableName,$resultData,$joinedData=[]){
+    protected function extendDataJoin(string $tableName,array $resultData,array $joinedData=[],string $separator = '.'){
 
         if($this->withJoinedFields){
             foreach($this->withJoinedFields as $joinedFieldName => $joinedFieldNameAlias){
-                $fieldNames = explode('.',trim($joinedFieldName),2);
+                $fieldNames = explode($separator,trim($joinedFieldName),2);
                 if($fieldNames[0] != $tableName){
                     continue;
                 }
@@ -161,11 +162,11 @@ class QueryBuilder extends Collery{
                             $rowData = $joinedDataRow;
                         }
                         else{
-                            $rowData = (new static($joinedDataRow))->select($field2Search)->get();
+                            $rowData = (new static($joinedDataRow,$separator))->select($field2Search)->get();
                         }
     
-                        if(strpos($field2Implement,'.') !== false){
-                            $tmpKeys    = explode('.',$field2Implement);
+                        if(strpos($field2Implement,$separator) !== false){
+                            $tmpKeys    = explode($separator,$field2Implement);
                             $tmpArray   = [];
                             $referenced = &$tmpArray;
                             while($tmpKey = array_shift($tmpKeys)){
@@ -190,8 +191,8 @@ class QueryBuilder extends Collery{
                     }
                 }
                 else{
-                    if(strpos($field2Implement,'.') !== false){
-                        $tmpKeys    = explode('.',$field2Implement);
+                    if(strpos($field2Implement,$separator) !== false){
+                        $tmpKeys    = explode($separator,$field2Implement);
                         $tmpArray   = [];
                         $referenced = &$tmpArray;
                         while($tmpKey = array_shift($tmpKeys)){
@@ -247,8 +248,9 @@ class QueryBuilder extends Collery{
      */
     public function join($resourceArray,callable $closure,$leftJoin = false){
         if(is_object($resourceArray) && is_a($resourceArray,Table::class)){
-            $tableName = $resourceArray->getName();
-            $tableData = $resourceArray->getData();
+            $tableName          = $resourceArray->getName();
+            $tableData          = $resourceArray->getData();
+            $tableDataSeparator = $resourceArray->getSeparator();
         }
         elseif(is_array($resourceArray)){
             $resourceArray = array_values($resourceArray);
@@ -257,8 +259,9 @@ class QueryBuilder extends Collery{
             }
 
         
-            $tableName = (string)$resourceArray[0];
-            $tableData = Resource::acquire($resourceArray[1]);
+            $tableName          = (string)$resourceArray[0];
+            $tableData          = Resource::acquire($resourceArray[1]);
+            $tableDataSeparator = (isset($resourceArray[2]))?(string)$resourceArray[2]:'.';
         }
         
         if(isset($this->joinerResources[$tableName])){
@@ -266,8 +269,9 @@ class QueryBuilder extends Collery{
         }
 
         $this->joinerResources[$tableName] = [
-            'data'=>$tableData,
-            'rules'=>[
+            'data'      =>$tableData,
+            'separator' =>$tableDataSeparator,
+            'rules'     =>[
                 ['closure'=>$closure,'isLeftJoin'=>$leftJoin]
             ]
         ];
