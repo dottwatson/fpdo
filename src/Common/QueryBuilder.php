@@ -2,6 +2,8 @@
 namespace Fpdo\Common;
 
 use Collery\Collery;
+use Lonfo\Walker;
+use Lonfo\Value;
 use Fpdo\Common\Resource;
 use Fpdo\Common\Table;
 use Fpdo\Exception\QueryBuilderException;
@@ -132,15 +134,15 @@ class QueryBuilder extends Collery{
     }
 
     /**
-     * Extends the record with joined data
+     * Extends the record with joined data (with `with` method)
      *
      * @param string $tableName
-     * @param array $resultData
+     * @param array|Walker $resultData
      * @param array $joinedData
      * @param string $separator
-     * @return array
+     * @return array|Walker
      */
-    protected function extendDataJoin(string $tableName,array $resultData,array $joinedData=[],string $separator = '.'){
+    protected function extendDataJoin(string $tableName,$resultData,array $joinedData=[],string $separator = '.'){
 
         if($this->withJoinedFields){
             foreach($this->withJoinedFields as $joinedFieldName => $joinedFieldNameAlias){
@@ -162,31 +164,25 @@ class QueryBuilder extends Collery{
                             $rowData = $joinedDataRow;
                         }
                         else{
-                            $rowData = (new static($joinedDataRow,$separator))->select($field2Search)->get();
+                            $rowData = (new static($joinedDataRow,$separator))->select($field2Search)->first();
                         }
     
                         if(strpos($field2Implement,$separator) !== false){
-                            $tmpKeys    = explode($separator,$field2Implement);
-                            $tmpArray   = [];
-                            $referenced = &$tmpArray;
-                            while($tmpKey = array_shift($tmpKeys)){
-                                //if count of tmpKeys == 0 then is a value assegnation
-                                //else is an array creation for the result
-                                if(count($tmpKeys)){
-                                    $referenced = (!isset($referenced[$tmpKey]))?[]:$referenced[$tmpKey];
-                                    $referenced = &$referenced[$tmpKey];
-                                }
-                                else{
-                                    $referenced[$tmpKey][] = $rowData;
-                                }
+                            if(is_a($resultData,Walker::class)){
+                                $resultData->set($field2Implement,$rowData,$separator);
                             }
-                            $resultData = array_merge_recursive($resultData,$tmpArray);
                         }
                         else{
-                            if(!isset($resultData[$field2Implement])){
-                                $resultData[$field2Implement] = [];
+                            $resultData->set($field2Implement,[],$separator);
+                            $subject = $resultData->xfind($field2Implement,$separator);
+                            if(is_a($subject,Walker::class)){
+                                $subject->append($rowData);
                             }
-                            $resultData[$field2Implement][] = $rowData;
+                            elseif(is_array($subject)){
+                                foreach($subject as $item){
+                                    $item->append($rowData);
+                                }
+                            }
                         }
                     }
                 }
