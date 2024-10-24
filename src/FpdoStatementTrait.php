@@ -1,0 +1,939 @@
+<?php
+namespace Fpdo;
+
+use Fpdo\InformationSchema\Tables;
+use PDO;
+use stdClass;
+
+trait FpdoStatementTrait
+{
+    /**
+     * @var string
+     */
+    private $sql;
+
+    /**
+     * @var int
+     */
+    private $affectedRows = 0;
+
+    /**
+     * @var array<int, array<string, mixed>>|null
+     */
+    private $result = null;
+
+    /**
+     * @var int
+     */
+    private $resultCursor = 0;
+
+    /**
+     * @var int
+     */
+    private $fetchMode = \PDO::FETCH_BOTH;
+
+    private $fetchArgument;
+
+    /**
+     * @var ?array
+     */
+    private $fetchConstructorArgs = null;
+
+    /**
+     * @var \Fpdo\Pdo\Php7\FPdo|\Fpdo\Pdo\Php8\FPdo
+     */
+    private $conn;
+
+    /**
+     * @var ?\PDO
+     */
+    private $real;
+
+    /**
+     * @var ?\PDOStatement
+     */
+    private $realStatement = null;
+
+    /**
+     * @var array<string|int, scalar>
+     */
+    private $boundValues = [];
+
+    public function __construct($conn, string $sql, ?\PDO $real)
+    {
+        $this->sql = $sql;
+        $this->conn = $conn;
+        $this->real = $real;
+
+        if ($this->real) {
+            $this->realStatement = $this->real->prepare($this->sql);
+        }
+    }
+
+    /**
+     * @param string|int $key
+     * @param scalar $value
+     * @param int $type
+     * @return bool
+     */
+    #[\ReturnTypeWillChange]
+    public function bindValue($key, $value, $type = \PDO::PARAM_STR) : bool
+    {
+        if (\is_string($key) && $key[0] !== ':') {
+            $key = ':' . $key;
+        } elseif (\is_int($key)) {
+            // Parameter offsets start at 1, which is weird.
+            --$key;
+        }
+
+        $this->boundValues[$key] = $value;
+
+        if ($this->realStatement) {
+            return $this->realStatement->bindValue($key, $value, $type);
+        }
+        return true;
+    }
+
+    /**
+     * @param string|int $key
+     * @param scalar $value
+     * @param int $type
+     * @param int $maxLength
+     * @param mixed $driverOptions
+     * @return bool
+     */
+    #[\ReturnTypeWillChange]
+    public function bindParam($key, &$value, $type = PDO::PARAM_STR, $maxLength = null, $driverOptions = null): bool
+    {
+        if (\is_string($key) && $key[0] !== ':') {
+            $key = ':' . $key;
+        } elseif (\is_int($key)) {
+            // Parameter offsets start at 1, which is weird.
+            --$key;
+        }
+        $this->boundValues[$key] = &$value;
+        if ($this->realStatement) {
+            /**
+             * @psalm-suppress PossiblyNullArgument
+             */
+            return $this->realStatement->bindParam($key, $value, $type, $maxLength, $driverOptions);
+        }
+        return true;
+    }
+
+    /**
+     * Overriding execute method to add query logging
+     * @param ?array $params
+     * @return bool
+     */
+    public function universalExecute(?array $params = null)
+    {
+        $sql = $this->sql;
+        if ($this->realStatement) {
+            if ($this->realStatement->execute($params) === false) {
+                // var_dump($this->sql);
+                throw new \UnexpectedValueException((string)$this->realStatement->errorInfo()[2]);
+            }
+        }
+
+        if (stripos($sql, 'CREATE TABLE') !== false) {
+            $create_queries = (new \Vimeo\MysqlEngine\Parser\CreateTableParser())->parse($sql);
+            // dump($create_queries);
+            foreach ($create_queries as $create_query) {
+                $this->conn->getServer()->addTableDefinition(
+                    $this->conn->getDatabaseName(),
+                    $create_query->name,
+                    \Vimeo\MysqlEngine\Processor\CreateProcessor::makeTableDefinition(
+                        $create_query,
+                        $this->conn->getDatabaseName()
+                    )
+                );
+            }
+
+            $this->saveInformationSchema($create_queries);
+
+            return true;
+        }
+
+        try {
+            $parsed_query = \Vimeo\MysqlEngine\Parser\SQLParser::parse($sql);
+        } catch (\Vimeo\MysqlEngine\Parser\LexerException $parse_exception) {
+            throw new \UnexpectedValueException(
+                'The SQL code ' . $sql . ' could not be converted to parser tokens: ' . $parse_exception->getMessage(),
+                0,
+                $parse_exception
+            );
+        } catch (\Vimeo\MysqlEngine\Parser\ParserException $parse_exception) {
+            throw new \UnexpectedValueException(
+                'The SQL code ' . $sql . ' could not be parsed: ' . $parse_exception->getMessage(),
+                0,
+                $parse_exception
+            );
+        }
+
+        $this->result = null;
+        $this->resultCursor = 0;
+        $this->affectedRows = 0;
+
+        switch (get_class($parsed_query)) {
+            case \Vimeo\MysqlEngine\Query\SelectQuery::class:
+                $this->loadTableData($parsed_query);
+                try {
+                    $raw_result = \Vimeo\MysqlEngine\Processor\SelectProcessor::process(
+                        $this->conn,
+                        new \Vimeo\MysqlEngine\Processor\Scope(array_merge($params ?? [], $this->boundValues)),
+                        $parsed_query
+                    );
+                } catch (\Vimeo\MysqlEngine\Processor\ProcessorException $runtime_exception) {
+                    throw new \UnexpectedValueException(
+                        'The SQL code ' . $sql . ' could not be evaluated: ' . $runtime_exception->getMessage(),
+                        0,
+                        $runtime_exception
+                    );
+                }
+
+                $this->result = self::processResult($this->conn, $raw_result);
+
+                if ($this->realStatement) {
+                    $fake_result = $this->result;
+                    $real_result = $this->realStatement->fetchAll(\PDO::FETCH_ASSOC);
+
+                    if ($fake_result) {
+                        if ($this->conn->shouldStringifyResult()) {
+                            $fake_result = array_map(
+                                function ($row) {
+                                    return self::stringify($row);
+                                },
+                                $fake_result
+                            );
+                        }
+
+                        if ($this->conn->shouldLowercaseResultKeys()) {
+                            $fake_result = array_map(
+                                function ($row) {
+                                    return self::lowercaseKeys($row);
+                                },
+                                $fake_result
+                            );
+                        }
+                    }
+
+                    if ($real_result != $fake_result) {
+                        var_dump($this->getExecutedSql($this->boundValues), $real_result, $fake_result);
+                        throw new \TypeError('different');
+                    }
+                }
+
+            break;
+
+            case \Vimeo\MysqlEngine\Query\InsertQuery::class:
+                $this->loadTableData($parsed_query);
+
+                $this->affectedRows = \Vimeo\MysqlEngine\Processor\InsertProcessor::process(
+                    $this->conn,
+                    new \Vimeo\MysqlEngine\Processor\Scope(array_merge($params ?? [], $this->boundValues)),
+                    $parsed_query
+                );
+                $this->saveTableData($parsed_query);
+
+                break;
+
+            case \Vimeo\MysqlEngine\Query\UpdateQuery::class:
+                $this->loadTableData($parsed_query);
+
+                $this->affectedRows = \Vimeo\MysqlEngine\Processor\UpdateProcessor::process(
+                    $this->conn,
+                    new \Vimeo\MysqlEngine\Processor\Scope(array_merge($params ?? [], $this->boundValues)),
+                    $parsed_query
+                );
+
+                $this->saveTableData($parsed_query);
+
+                break;
+
+            case \Vimeo\MysqlEngine\Query\DeleteQuery::class:
+                $this->loadTableData($parsed_query);
+
+                $this->affectedRows = \Vimeo\MysqlEngine\Processor\DeleteProcessor::process(
+                    $this->conn,
+                    new \Vimeo\MysqlEngine\Processor\Scope(array_merge($params ?? [], $this->boundValues)),
+                    $parsed_query
+                );
+
+                $this->saveTableData($parsed_query);
+
+                break;
+
+            case \Vimeo\MysqlEngine\Query\TruncateQuery::class:
+                [$databaseName, $tableName] = \Vimeo\MysqlEngine\Processor\Processor::parseTableName($this->conn, $parsed_query->table);
+                $this->conn->getServer()->resetTable($databaseName, $tableName);
+                $this->saveTableData($parsed_query);
+
+                break;
+
+            case \Vimeo\MysqlEngine\Query\DropTableQuery::class:
+                [$databaseName, $tableName] = \Vimeo\MysqlEngine\Processor\Processor::parseTableName($this->conn, $parsed_query->table);
+                $this->conn->getServer()->dropTable($databaseName, $tableName);
+
+                break;
+
+            case \Vimeo\MysqlEngine\Query\ShowTablesQuery::class:
+                if ($this->conn->getServer()->getTable(
+                    $this->conn->getDatabaseName(),
+                    $parsed_query->pattern
+                )) {
+                    $this->result = [[$parsed_query->sql => $parsed_query->pattern]];
+                } else {
+                    $this->result = [];
+                }
+
+                break;
+
+            case \Vimeo\MysqlEngine\Query\ShowIndexQuery::class:
+                $this->result = self::processResult(
+                    $this->conn,
+                    \Vimeo\MysqlEngine\Processor\ShowIndexProcessor::process(
+                        $this->conn,
+                        new \Vimeo\MysqlEngine\Processor\Scope(array_merge($params ?? [], $this->boundValues)),
+                        $parsed_query
+                    )
+                );
+                break;
+
+            default:
+                throw new \UnexpectedValueException('Unsupported operation type ' . $sql);
+        }
+
+        return true;
+    }
+
+    /**
+     * @psalm-return array<int, array<string, mixed>>
+     */
+    private static function processResult( $conn, \Vimeo\MysqlEngine\Processor\QueryResult $raw_result): array
+    {
+        $result = [];
+
+        foreach ($raw_result->rows as $i => $row) {
+            foreach ($row as $key => $value) {
+                /**
+                 * @psalm-suppress MixedAssignment
+                 */
+                $result[$i][\substr($key, 0, 255) ?: ''] = \array_key_exists($key, $raw_result->columns)
+                    ? \Vimeo\MysqlEngine\DataIntegrity::coerceValueToColumn($conn, $raw_result->columns[$key], $value)
+                    : $value;
+            }
+        }
+
+        return $result;
+    }
+
+    public function columnCount() : int
+    {
+        if (!$this->result) {
+            return 0;
+        }
+
+        return \count(\reset($this->result));
+    }
+
+    public function rowCount() : int
+    {
+        return $this->affectedRows;
+    }
+
+    /**
+     * @param int $fetch_style
+     * @param int $cursor_orientation
+     * @param int $cursor_offset
+     */
+    #[\ReturnTypeWillChange]
+    public function fetch(
+        $fetch_style = -123,
+        $cursor_orientation = \PDO::FETCH_ORI_NEXT,
+        $cursor_offset = 0
+    ) {
+        if ($fetch_style === -123) {
+            $fetch_style = $this->fetchMode;
+        }
+
+        $row = $this->result[$this->resultCursor + $cursor_offset] ?? null;
+
+        if ($row === null) {
+            return false;
+        }
+
+        if ($this->conn->shouldStringifyResult()) {
+            $row = self::stringify($row);
+        }
+
+        if ($this->conn->shouldLowercaseResultKeys()) {
+            $row = self::lowercaseKeys($row);
+        }
+
+        if ($fetch_style === \PDO::FETCH_ASSOC) {
+            $this->resultCursor++;
+
+            return $row;
+        }
+
+        if ($fetch_style === \PDO::FETCH_NUM) {
+            $this->resultCursor++;
+
+            return \array_values($row);
+        }
+
+        if ($fetch_style === \PDO::FETCH_COLUMN) {
+            $this->resultCursor++;
+
+            return \array_values($row)[0] ?? null;
+        }
+
+        if ($fetch_style === \PDO::FETCH_BOTH) {
+            $this->resultCursor++;
+
+            return array_merge($row, \array_values($row));
+        }
+
+        if ($fetch_style === \PDO::FETCH_CLASS) {
+            $this->resultCursor++;
+
+            return self::convertRowToObject($row, $this->fetchArgument, $this->fetchConstructorArgs);
+        }
+
+        throw new \Exception('not implemented');
+    }
+
+    /**
+     * @param int $column
+     * @return null|scalar
+     */
+    #[\ReturnTypeWillChange]
+    public function fetchColumn($column = 0)
+    {
+        /** @var array<int, scalar>|false $row */
+        $row = $this->fetch(\PDO::FETCH_NUM);
+        if ($row === false) {
+            return $row;
+        }
+        if (!\array_key_exists($column, $row)) {
+            throw new \PDOException('SQLSTATE[HY000]: General error: Invalid column index');
+        }
+
+        return $row[$column] ?? null;
+    }
+
+    /**
+     * @param  int $fetch_style
+     * @param  mixed      $args
+     */
+    public function universalFetchAll(int $fetch_style = -123, ...$args) : array
+    {
+        if ($fetch_style === -123) {
+            $fetch_style = $this->fetchMode;
+            $fetch_argument = $this->fetchArgument;
+            $ctor_args = $this->fetchConstructorArgs;
+        } else {
+            $fetch_argument = $args[0] ?? null;
+            $ctor_args = $args[1] ?? [];
+        }
+        
+        if ($fetch_style === \PDO::FETCH_ASSOC) {
+            return array_map(
+                function ($row) {
+                    if ($this->conn->shouldStringifyResult()) {
+                        $row = self::stringify($row);
+                    }
+
+                    if ($this->conn->shouldLowercaseResultKeys()) {
+                        $row = self::lowercaseKeys($row);
+                    }
+
+                    return $row;
+                },
+                $this->result ?: []
+            );
+        }
+
+        if ($fetch_style === \PDO::FETCH_NUM) {
+            return array_map(
+                function ($row) {
+                    if ($this->conn->shouldStringifyResult()) {
+                        $row = self::stringify($row);
+                    }
+
+                    return \array_values($row);
+                },
+                $this->result ?: []
+            );
+        }
+
+        if ($fetch_style === \PDO::FETCH_BOTH) {
+            return array_map(
+                function ($row) {
+                    if ($this->conn->shouldStringifyResult()) {
+                        $row = self::stringify($row);
+                    }
+
+                    if ($this->conn->shouldLowercaseResultKeys()) {
+                        $row = self::lowercaseKeys($row);
+                    }
+
+                    return array_merge($row, \array_values($row));
+                },
+                $this->result ?: []
+            );
+        }
+
+        if ($fetch_style === \PDO::FETCH_COLUMN && $fetch_argument !== null) {
+            return \array_column(
+                array_map(
+                    function ($row) {
+                        if ($this->conn->shouldStringifyResult()) {
+                            $row = self::stringify($row);
+                        }
+
+                        return \array_values($row);
+                    },
+                    $this->result ?: []
+                ),
+                $fetch_argument
+            );
+        }
+
+        if ($fetch_style === \PDO::FETCH_CLASS) {
+            if (!$this->result) {
+                return [];
+            }
+
+            return array_map(
+                function ($row) use ($fetch_argument, $ctor_args) {
+                    if ($this->conn->shouldStringifyResult()) {
+                        $row = self::stringify($row);
+                    }
+
+                    if ($this->conn->shouldLowercaseResultKeys()) {
+                        $row = self::lowercaseKeys($row);
+                    }
+
+                    return self::convertRowToObject($row, $fetch_argument, $ctor_args);
+                },
+                $this->result
+            );
+        }
+
+        throw new \Exception('Fetch style not implemented');
+    }
+
+    /**
+     * @param  int $fetch_style
+     * @param  mixed      $args
+     */
+    public function universalSetFetchMode(int $mode, ...$args) : bool
+    {
+        $fetch_argument = $args[0] ?? null;
+        $ctorargs = $args[1] ?? [];
+
+        if ($this->realStatement) {
+            $this->realStatement->setFetchMode($mode, $fetch_argument, $ctorargs);
+        }
+
+        $this->fetchMode = $mode;
+        $this->fetchArgument = $fetch_argument;
+        $this->fetchConstructorArgs = $ctorargs;
+
+        return true;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return object
+     */
+    private static function convertRowToObject(array $row, $class, array $ctor_args)
+    {
+        $class = $class ?? 'stdClass';
+        try{
+            $reflector = new \ReflectionClass($class);
+
+            $instance = $reflector->newInstanceWithoutConstructor();
+    
+            foreach ($row as $key => $value) {
+                if ($key[0] === '`') {
+                    $key = \substr($key, 1, -1);
+                }
+    
+                $property = $reflector->getProperty($key);
+                $property->setAccessible(true);
+                $property->setValue($instance, $value);
+                $property->setAccessible(false);
+            }
+
+            $instance->__construct(...$ctor_args);
+        }
+        catch(\Exception $e){
+            $instance = new stdClass;
+            foreach ($row as $key => $value) {
+                if ($key[0] === '`') {
+                    $key = \substr($key, 1, -1);
+                }
+                
+                $instance->{$key} = $value;
+            }
+
+        }
+
+        return $instance;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     *
+     * @psalm-return array<string, null|string>
+     */
+    private static function stringify(array $row): array
+    {
+        return \array_map(
+            function ($value) {
+                return $value === null ? $value : (string) $value;
+            },
+            $row
+        );
+    }
+
+    /**
+     * @template T
+     * @param array<string, T> $row
+     *
+     * @psalm-return array<string, T>
+     */
+    private static function lowercaseKeys(array $row): array
+    {
+        $lowercased_row = [];
+
+        foreach ($row as $col => $value) {
+            $lowercased_row[\strtolower($col)] = $value;
+        }
+
+        return $lowercased_row;
+    }
+
+    /**
+     * @psalm-taint-sink callable $class
+     *
+     * @template T
+     * @param    class-string<T>|null $class
+     * @param    array|null $ctorArgs
+     * @return   false|T
+     */
+    public function universalFetchObject(?string $class = \stdClass::class, ?array $ctorArgs = null)
+    {
+        throw new \Exception('not implemented');
+    }
+
+    private function getExecutedSql(?array $params) : string
+    {
+        if (!$params) {
+            return $this->sql;
+        }
+
+        $sql = $this->sql;
+
+        foreach ($params as $key => $value) {
+            if (\is_string($key) && $key[0] === ':') {
+                $key = \substr($key, 1);
+            }
+
+            $sql = preg_replace(
+                '/:' . $key . '(?![a-z_A-Z0-9])/',
+                \is_string($value) || \is_object($value)
+                    ? "'" . str_replace("'", "\\'", (string) $value) . "'"
+                    : ($value === null
+                        ? 'NULL'
+                        : ($value === true
+                            ? 'TRUE'
+                            : ($value === false
+                                ? 'FALSE'
+                                : (string) $value
+                            )
+                        )
+                    ),
+                $sql
+            );
+        }
+
+        return $sql;
+    }
+
+    /**
+     * @return array{0: null|string, 1: int|null, 2: null|string, 3?: mixed, 4?: mixed}
+     */
+    public function errorInfo(): array
+    {
+        return ['00000', 0, 'PHP MySQL Engine: errorInfo() not supported.'];
+    }
+
+    public function loadTableData($parsed_query)
+    {
+        if($this->conn->getDatabaseName() == 'information_schema'){
+            return;
+        }
+
+        $tablesInstances = $this->conn->getDatabaseDefinition()->getTablesInstances();
+        $tablesList = $this->scanQueryTables($parsed_query);
+
+        $tablesList = ($tablesList)?array_unique($tablesList):$tablesList;
+
+        foreach($tablesList as $tableName){
+            if(isset($tablesInstances[$tableName])){
+                $tableInstance = $tablesInstances[$tableName];
+                if(!$tableInstance->ready()){
+                    $tableInstance->read($this->conn);
+                }
+            }
+        }
+    }
+
+    /**
+     * Undocumented function
+     *
+     * @param \Vimeo\MysqlEngine\Query\SelectQuery|\Vimeo\MysqlEngine\Query\InsertQuery|\Vimeo\MysqlEngine\Query\UpdateQuery|\Vimeo\MysqlEngine\Query\DeleteQuery $parsed_query
+     * @return array
+     */
+    protected function scanQueryTables($parsed_query)
+    {
+        $itemsToLoad = [];
+
+        if(isset($parsed_query->whereClause) && is_object($parsed_query->whereClause)){
+            $wheresStack[]      = $parsed_query->whereClause;
+
+            while($currentWhere = array_shift($wheresStack)){
+                // dump($currentWhere);
+                if($currentWhere instanceof \Vimeo\MysqlEngine\Query\Expression\BinaryOperatorExpression){
+                    if($currentWhere->left instanceof \Vimeo\MysqlEngine\Query\Expression\BinaryOperatorExpression){
+                        $wheresStack[] = $currentWhere->left;
+                    }
+                    elseif($currentWhere->left instanceof \Vimeo\MysqlEngine\Query\Expression\SubqueryExpression){
+                        // $itemsToLoad[] = $currentWhere->left->query;
+                        foreach($this->scanQueryTables($currentWhere->left->query) as $subData){
+                            $itemsToLoad[] = $subData;
+                        }
+
+                    }
+
+                    if($currentWhere->right instanceof \Vimeo\MysqlEngine\Query\Expression\BinaryOperatorExpression){
+                        $wheresStack[] = $currentWhere->right;
+                    }
+                    elseif($currentWhere->right instanceof \Vimeo\MysqlEngine\Query\Expression\SubqueryExpression){
+                        // $itemsToLoad[] = $currentWhere->right->query;
+                        foreach($this->scanQueryTables($currentWhere->right->query) as $subData){
+                            $itemsToLoad[] = $subData;
+                        }
+                    }
+                }
+            }
+        }
+
+        switch (get_class($parsed_query)) {
+            case \Vimeo\MysqlEngine\Query\SelectQuery::class:
+                if(isset($parsed_query->fromClause)  && $parsed_query->fromClause->tables){
+                    foreach($parsed_query->fromClause->tables as $requestedTable){
+                        $itemsToLoad[] = $requestedTable['name'];
+                        // if(isset($tablesInstances[ $requestedTable['name'] ])){
+                        //     $tableInstance = $tablesInstances[ $requestedTable['name'] ];
+                        //     if(!$tableInstance->ready()){
+                        //         $tableInstance->read($this->conn);
+                        //     }
+                        // }
+                        if(isset($requestedTable['subquery'])){
+                            // $itemsToLoad[] = $requestedTable['subquery']->query;
+                            foreach($this->scanQueryTables($requestedTable['subquery']->query) as $subData){
+                                $itemsToLoad[] = $subData;
+                            }
+                            // $this->loadTableData($requestedTable['subquery']->query);
+                        }
+
+                    }
+                }
+            break;
+
+            case \Vimeo\MysqlEngine\Query\InsertQuery::class:
+                $table = $parsed_query->table;
+                $itemsToLoad[] = $table;
+                // if(isset($tablesInstances[ $table ])){
+                //     $tableInstance = $tablesInstances[ $table ];
+                //     if(!$tableInstance->ready()){
+                //         $tableInstance->read($this->conn);
+                //     }
+                // }
+            break;
+
+            case \Vimeo\MysqlEngine\Query\UpdateQuery::class:
+                $table = $parsed_query->tableName;
+                $itemsToLoad[] = $table;
+                // if(isset($tablesInstances[ $table ])){
+                //     $tableInstance = $tablesInstances[ $table ];
+                //     if(!$tableInstance->ready()){
+                //         $tableInstance->read($this->conn);
+                //     }
+                // }
+
+            break;
+
+            case \Vimeo\MysqlEngine\Query\DeleteQuery::class:
+                if(isset($parsed_query->fromClause)  && $parsed_query->fromClause){
+                    $itemsToLoad[] = $parsed_query->fromClause['name'];
+                    // if(isset($tablesInstances[ $parsed_query->fromClause['name'] ])){
+                    //     $tableInstance = $tablesInstances[ $parsed_query->fromClause['name'] ];
+                    //     if(!$tableInstance->ready()){
+                    //         $tableInstance->read($this->conn);
+                    //     }
+                    // }
+                    if(isset($parsed_query->fromClause['subquery'])){
+                        // $itemsToLoad[] = $parsed_query->fromClause['subquery']->query;
+                        foreach($this->scanQueryTables($parsed_query->fromClause['subquery']->query) as $subData){
+                            $itemsToLoad[] = $subData;
+                        }
+                        // $this->loadTableData($parsed_query->fromClause['subquery']);
+                    }
+                
+                }
+
+            break;
+        }
+
+        return $itemsToLoad;
+    }
+    
+    /**
+     * the logic under the table modifications
+     *
+     * @param \Vimeo\MysqlEngine\Query\SelectQuery|\Vimeo\MysqlEngine\Query\InsertQuery|\Vimeo\MysqlEngine\Query\UpdateQuery|\Vimeo\MysqlEngine\Query\DeleteQuery|\Vimeo\MysqlEngine\Query\TruncateQuery|\Vimeo\MysqlEngine\Query\DropTableQuery $parsed_query
+     * @return void
+     */
+    public function saveTableData($parsed_query)
+    {
+        if($this->conn->getDatabaseName() == 'information_schema'){
+            return;
+        }
+
+        $tablesInstances = $this->conn->getDatabaseDefinition()->getTablesInstances();
+        switch (get_class($parsed_query)) {
+            case \Vimeo\MysqlEngine\Query\InsertQuery::class:
+                $table = $parsed_query->table;
+                if(isset($tablesInstances[ $table ])){
+                    $tableInstance = $tablesInstances[ $table ];
+                    if(!$tableInstance->ready()){
+                        $tableInstance->read($this->conn);
+                    }
+
+                    $tableInstance->isDirty = ($this->affectedRows > 0)?true: $tableInstance->isDirty;
+
+                    $tableInstance->write($this->conn,null,config('fpdo.write_on_end',false));
+
+                    // if(config('fpdo.write_on_end',false) == false){
+                    //     $tableInstance->write($this->conn);
+                    // }                    
+                }
+            break;
+
+            case \Vimeo\MysqlEngine\Query\UpdateQuery::class:
+                $table = $parsed_query->tableName;
+                if(isset($tablesInstances[ $table ])){
+                    $tableInstance = $tablesInstances[ $table ];
+                    if(!$tableInstance->ready()){
+                        $tableInstance->read($this->conn);
+                    }
+                }
+
+                $tableInstance->isDirty = ($this->affectedRows > 0)?true: $tableInstance->isDirty;
+
+                $tableInstance->write($this->conn,null,config('fpdo.write_on_end',false));
+
+                // if(config('fpdo.write_on_end',false) == false){
+                //     $tableInstance->write($this->conn);
+                // }                    
+            break;
+
+            case \Vimeo\MysqlEngine\Query\DeleteQuery::class:
+                if(isset($parsed_query->fromClause)  && $parsed_query->fromClause){
+                    if(isset($parsed_query->fromClause)  && $parsed_query->fromClause){
+                        if(isset($tablesInstances[ $parsed_query->fromClause['name'] ])){
+                            $tableInstance = $tablesInstances[ $parsed_query->fromClause['name'] ];
+                            if(!$tableInstance->ready()){
+                                $tableInstance->read($this->conn);
+                            }
+
+                            
+                            $tableInstance->isDirty = ($this->affectedRows > 0)?true: $tableInstance->isDirty;
+
+                            $tableInstance->write($this->conn,null,config('fpdo.write_on_end',false));
+
+                            // if(config('fpdo.write_on_end',false) == false){
+                            //     $tableInstance->write($this->conn);
+                            // }                    
+                        }
+                    }
+                }
+
+            break;
+
+            case \Vimeo\MysqlEngine\Query\TruncateQuery::class:
+                [$databaseName, $tableName] = \Vimeo\MysqlEngine\Processor\Processor::parseTableName($this->conn, $parsed_query->table);
+                $this->conn->getServer()->resetTable($databaseName, $tableName);
+                if(isset($tablesInstances[ $tableName ])){
+                    $tableInstance = $tablesInstances[ $tableName ];
+                    if(!$tableInstance->ready()){
+                        $tableInstance->read($this->conn);
+                    }
+                }
+
+                if($this->affectedRows){
+                    $tableInstance->isDirty = true;
+                }
+
+                $tableInstance->write($this->conn,null,config('fpdo.write_on_end',false));
+
+                // if(config('fpdo.write_on_end',false) == false){
+                //     $tableInstance->write($this->conn);
+                // }                    
+
+            break;
+
+            case \Vimeo\MysqlEngine\Query\DropTableQuery::class:
+                [$databaseName, $tableName] = \Vimeo\MysqlEngine\Processor\Processor::parseTableName($this->conn, $parsed_query->table);
+                if(isset($tablesInstances[ $tableName ])){
+                    $tableInstance = $tablesInstances[ $tableName ];
+                    if(!$tableInstance->ready()){
+                        $tableInstance->read($this->conn);
+                    }
+                }
+
+                $this->conn->getDatabaseDefinition()->dropTable($tableName);
+                $this->conn->query("DELETE FROM `information_schema`.`columns` WHERE table_schema = '{$databaseName}' AND table_name = '{$tableName}'");
+
+            break;
+        }
+    }
+
+    /**
+     * populate  the information_schema with columns definitons
+     *
+     * @param array<\Vimeo\MysqlEngine\Query\CreateQuery> $create_queries
+     * @return void
+     */
+    protected function saveInformationSchema($create_queries)
+    {
+        if($this->conn->getDatabaseName() != 'information_schema'){
+            
+            foreach ($create_queries as $create_query){
+                $informationSchemaTable = new Tables($this->conn,$create_query);
+                $informationSchemaTable->populate();
+            }            
+        }
+    
+    
+    }
+
+
+
+}
