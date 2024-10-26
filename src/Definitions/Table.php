@@ -84,7 +84,7 @@ abstract class Table{
      */
     public function getCollation()
     {
-        return $this->collation;
+        return $this->collation ?? $this->databaseDefinition->getCollation();
     }
 
     /**
@@ -94,7 +94,7 @@ abstract class Table{
      */
     public function getCharset()
     {
-        return $this->charset;
+        return $this->charset ?? $this->databaseDefinition->getCharset();
     }
     
     /**

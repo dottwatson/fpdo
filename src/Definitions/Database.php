@@ -66,7 +66,7 @@ abstract class Database{
      */
     public function getCollation()
     {
-        return $this->collation;
+        return $this->collation ?? config('fpdo.default_charset','utf8mb4');
     }
 
     /**
@@ -74,7 +74,7 @@ abstract class Database{
      */
     public function getCharset()
     {
-        return $this->charset;
+        return $this->charset ?? config('fpdo.default_charset','utf8mb4');
     }
 
     /**
