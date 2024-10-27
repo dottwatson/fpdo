@@ -6,6 +6,8 @@ Fpdo is a versatile tool that allows you to cross-reference data from different 
 
     composer require dottwatson/fpdo
 
+for the configuration go to section [configuration](#configuration)
+
 ## Creating a Database
 
 First, let's create a connection in Laravel's database configuration file:  
@@ -173,9 +175,52 @@ class Greetings extends QueryFunctionsEvaluator {
     }
 }
 ```
+adding it in the config/fpdo.php
+```php
+<?php
+return [
+	...
+	'extensions' => [
+		...
+		My\FpdoFunctionsExtensions\Greetings::class,
+		...
+	]
+]
+```
 and its usage
 ```sql
 SELECT table.*,GREETINGS(table.name) as greetings FROM table 
 ```
+
+Here's the translation with corrected syntax:
+
+---
+
+## Configuration
+
+To have the configuration file in the `config` folder of your application:
+
+```bash
+php artisan vendor:publish --provider="Fpdo\FpdoServiceProvider" --tag=config
+```
+
+Below is a table describing the parameters:
+
+| Parameter          | Value Type | Explanation                                                                                                                                                                                                                                                                                                                                                                       |
+|--------------------|------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| default_charset    | string     | The default charset used for tables (and databases) where it is not otherwise defined.                                                                                                                                                                                                                                                                                            |
+| default_collation  | string     | The default collation used for tables (and databases) where it is not otherwise defined.                                                                                                                                                                                                                                                                                          |
+| slow_query_log     | boolean    | The slow query log consists of SQL statements that take more than `long_query_time` seconds to execute.                                                                                                                                                                                                                                                                            |
+| long_query_time    | int        | Expressed in seconds. Set to -1 to log every query and its execution time.                                                                                                                                                                                                                                                                                                        |
+| log_channel        | string     | According to your logging configuration, select your logging channel.                                                                                                                                                                                                                                                                                                             |
+| slow_read_log      | boolean    | The slow read log consists of data retrieval from `table::read()` that takes more than `long_read_time` seconds to execute.                                                                                                                                                                                                                                                        |
+| long_read_time     | int        | Expressed in seconds. Set to -1 to log each read operation's time to populate tables.                                                                                                                                                                                                                                                                                             |
+| write_on_end       | boolean    | The writing logic is a special setting that makes the system faster by avoiding long write processes. When a record is inserted, updated, or deleted, the table needs to be saved to the original source, which takes time if done for each modified record. With this parameter set to `true`, modifications stay in memory and are written at the end of execution. **If enabled, any fatal error during execution will result in all in-memory data being lost!** |
+| slow_write_log     | boolean    | The slow write log consists of data writes from `table::write()` that take more than `long_write_time` seconds to execute.                                                                                                                                                                                                                                                        |
+| long_write_time    | int        | Expressed in seconds. Set to -1 to log each write operation's time to save tables.                                                                                                                                                                                                                                                                                                |
+| extensions         | array      | Extend fpdo with your custom function set. Use class names.
+
+That's it!
+
 
 If you like this package, consider to buy me a ☕[coffee](https://www.paypal.com/donate/?business=RVJ6GPQ6JFR98&no_recurring=0&item_name=Thank%20you%20for%20your%20support!%20If,%20like%20me,%20you%20believe%20in%20the%20opensource,%20this%20will%20help%20us%20make%20it%20even%20more%20exciting.&currency_code=EUR)

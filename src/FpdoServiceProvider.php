@@ -19,7 +19,7 @@ class FpdoServiceProvider extends ServiceProvider
     {
         $this->publishes([
             realpath(__DIR__.'/../config/fpdo.php') => config_path('fpdo.php'),
-        ]);        
+        ],'config');        
     }
 
     /**
