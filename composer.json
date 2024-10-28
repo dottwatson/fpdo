@@ -1,12 +1,14 @@
 {
     "name": "dottwatson/fpdo",
-    "description": "A MySQL engine written in PHP for interct wwith Flat Files",
+    "description": "A MySQL engine written in PHP for interct with any source full compatible with Laravel",
     "type": "library",
+    "keywords": ["laravel","sql","data","parser","pdo"],
     "license": "MIT",
     "authors": [
         {
             "name": "Mirko Temperini",
-            "email": "mirko.temperini@gmail.com"
+            "email": "mirko.temperini@gmail.com",
+            "role": "Developer"
         }
     ],
     "require": {
@@ -14,9 +16,6 @@
         "ext-pdo": "*",
         "dottwatson/php-mysql-engine": "@dev"
     },
-    "repositories":[ 
-
-    ],
     "autoload": {
         "psr-4": {
             "Fpdo\\": "src"

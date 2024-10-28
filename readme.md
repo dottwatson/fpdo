@@ -118,6 +118,8 @@ class Products extends Table {
 
 In this example, `reader` is executed to read the data and must return an array of key-value pairs of all data records. `writer` is responsible for writing data wherever needed (in this example, it rewrites the same JSON file). However, if you don’t need to write data, `writer` can remain empty but must always be present (due to the abstract class model).
 
+**Notes**: To optimize resources, all data from the tables will be loaded only when needed. This means that if you configure 20 tables, but only query 2, the data from the tables concerned will be loaded. This is called *lazy loading*.
+
 That's it! Everything else remains the same for your application, such as models, relationships, direct queries, and so on.
 
 ## Limitations
