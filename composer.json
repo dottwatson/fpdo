@@ -14,8 +14,14 @@
     "require": {
         "php": "^7.1|^8",
         "ext-pdo": "*",
-        "dottwatson/php-mysql-engine": "@dev"
+        "dottwatson/php-mysql-engine": "^1.0"
     },
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/dottwatson/php-mysql-engine"
+        }
+    ],    
     "autoload": {
         "psr-4": {
             "Fpdo\\": "src"
