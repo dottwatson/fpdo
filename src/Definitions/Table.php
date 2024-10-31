@@ -123,7 +123,6 @@ abstract class Table{
                 break;
             }
 
-
             foreach($data as &$row){
                 $values = [];
                 $sql = [];
@@ -146,6 +145,7 @@ abstract class Table{
             }
 
             $executionTime = microtime(true)-$start;
+
             if( config('fpdo.slow_read_log',false) == true && 
             (config('fpdo.long_read_time',-1) == -1 || config('fpdo.long_read_time',-1) <= $executionTime )
             ){

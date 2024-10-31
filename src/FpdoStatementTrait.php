@@ -131,14 +131,12 @@ trait FpdoStatementTrait
         $sql = $this->sql;
         if ($this->realStatement) {
             if ($this->realStatement->execute($params) === false) {
-                // var_dump($this->sql);
                 throw new \UnexpectedValueException((string)$this->realStatement->errorInfo()[2]);
             }
         }
 
         if (stripos($sql, 'CREATE TABLE') !== false) {
             $create_queries = (new \Vimeo\MysqlEngine\Parser\CreateTableParser())->parse($sql);
-            // dump($create_queries);
             foreach ($create_queries as $create_query) {
                 $this->conn->getServer()->addTableDefinition(
                     $this->conn->getDatabaseName(),
@@ -694,7 +692,7 @@ trait FpdoStatementTrait
     }
 
     /**
-     * Undocumented function
+     * list tables to load 
      *
      * @param \Vimeo\MysqlEngine\Query\SelectQuery|\Vimeo\MysqlEngine\Query\InsertQuery|\Vimeo\MysqlEngine\Query\UpdateQuery|\Vimeo\MysqlEngine\Query\DeleteQuery $parsed_query
      * @return array
@@ -707,13 +705,11 @@ trait FpdoStatementTrait
             $wheresStack[]      = $parsed_query->whereClause;
 
             while($currentWhere = array_shift($wheresStack)){
-                // dump($currentWhere);
                 if($currentWhere instanceof \Vimeo\MysqlEngine\Query\Expression\BinaryOperatorExpression){
                     if($currentWhere->left instanceof \Vimeo\MysqlEngine\Query\Expression\BinaryOperatorExpression){
                         $wheresStack[] = $currentWhere->left;
                     }
                     elseif($currentWhere->left instanceof \Vimeo\MysqlEngine\Query\Expression\SubqueryExpression){
-                        // $itemsToLoad[] = $currentWhere->left->query;
                         foreach($this->scanQueryTables($currentWhere->left->query) as $subData){
                             $itemsToLoad[] = $subData;
                         }
@@ -724,7 +720,6 @@ trait FpdoStatementTrait
                         $wheresStack[] = $currentWhere->right;
                     }
                     elseif($currentWhere->right instanceof \Vimeo\MysqlEngine\Query\Expression\SubqueryExpression){
-                        // $itemsToLoad[] = $currentWhere->right->query;
                         foreach($this->scanQueryTables($currentWhere->right->query) as $subData){
                             $itemsToLoad[] = $subData;
                         }
@@ -738,18 +733,10 @@ trait FpdoStatementTrait
                 if(isset($parsed_query->fromClause)  && $parsed_query->fromClause->tables){
                     foreach($parsed_query->fromClause->tables as $requestedTable){
                         $itemsToLoad[] = $requestedTable['name'];
-                        // if(isset($tablesInstances[ $requestedTable['name'] ])){
-                        //     $tableInstance = $tablesInstances[ $requestedTable['name'] ];
-                        //     if(!$tableInstance->ready()){
-                        //         $tableInstance->read($this->conn);
-                        //     }
-                        // }
                         if(isset($requestedTable['subquery'])){
-                            // $itemsToLoad[] = $requestedTable['subquery']->query;
                             foreach($this->scanQueryTables($requestedTable['subquery']->query) as $subData){
                                 $itemsToLoad[] = $subData;
                             }
-                            // $this->loadTableData($requestedTable['subquery']->query);
                         }
 
                     }
@@ -759,41 +746,20 @@ trait FpdoStatementTrait
             case \Vimeo\MysqlEngine\Query\InsertQuery::class:
                 $table = $parsed_query->table;
                 $itemsToLoad[] = $table;
-                // if(isset($tablesInstances[ $table ])){
-                //     $tableInstance = $tablesInstances[ $table ];
-                //     if(!$tableInstance->ready()){
-                //         $tableInstance->read($this->conn);
-                //     }
-                // }
             break;
 
             case \Vimeo\MysqlEngine\Query\UpdateQuery::class:
                 $table = $parsed_query->tableName;
                 $itemsToLoad[] = $table;
-                // if(isset($tablesInstances[ $table ])){
-                //     $tableInstance = $tablesInstances[ $table ];
-                //     if(!$tableInstance->ready()){
-                //         $tableInstance->read($this->conn);
-                //     }
-                // }
-
             break;
 
             case \Vimeo\MysqlEngine\Query\DeleteQuery::class:
                 if(isset($parsed_query->fromClause)  && $parsed_query->fromClause){
                     $itemsToLoad[] = $parsed_query->fromClause['name'];
-                    // if(isset($tablesInstances[ $parsed_query->fromClause['name'] ])){
-                    //     $tableInstance = $tablesInstances[ $parsed_query->fromClause['name'] ];
-                    //     if(!$tableInstance->ready()){
-                    //         $tableInstance->read($this->conn);
-                    //     }
-                    // }
                     if(isset($parsed_query->fromClause['subquery'])){
-                        // $itemsToLoad[] = $parsed_query->fromClause['subquery']->query;
                         foreach($this->scanQueryTables($parsed_query->fromClause['subquery']->query) as $subData){
                             $itemsToLoad[] = $subData;
                         }
-                        // $this->loadTableData($parsed_query->fromClause['subquery']);
                     }
                 
                 }
@@ -829,10 +795,6 @@ trait FpdoStatementTrait
                     $tableInstance->isDirty = ($this->affectedRows > 0)?true: $tableInstance->isDirty;
 
                     $tableInstance->write($this->conn,null,config('fpdo.write_on_end',false));
-
-                    // if(config('fpdo.write_on_end',false) == false){
-                    //     $tableInstance->write($this->conn);
-                    // }                    
                 }
             break;
 
@@ -848,10 +810,6 @@ trait FpdoStatementTrait
                 $tableInstance->isDirty = ($this->affectedRows > 0)?true: $tableInstance->isDirty;
 
                 $tableInstance->write($this->conn,null,config('fpdo.write_on_end',false));
-
-                // if(config('fpdo.write_on_end',false) == false){
-                //     $tableInstance->write($this->conn);
-                // }                    
             break;
 
             case \Vimeo\MysqlEngine\Query\DeleteQuery::class:
@@ -865,12 +823,7 @@ trait FpdoStatementTrait
 
                             
                             $tableInstance->isDirty = ($this->affectedRows > 0)?true: $tableInstance->isDirty;
-
                             $tableInstance->write($this->conn,null,config('fpdo.write_on_end',false));
-
-                            // if(config('fpdo.write_on_end',false) == false){
-                            //     $tableInstance->write($this->conn);
-                            // }                    
                         }
                     }
                 }
@@ -892,11 +845,6 @@ trait FpdoStatementTrait
                 }
 
                 $tableInstance->write($this->conn,null,config('fpdo.write_on_end',false));
-
-                // if(config('fpdo.write_on_end',false) == false){
-                //     $tableInstance->write($this->conn);
-                // }                    
-
             break;
 
             case \Vimeo\MysqlEngine\Query\DropTableQuery::class:
@@ -910,7 +858,6 @@ trait FpdoStatementTrait
 
                 $this->conn->getDatabaseDefinition()->dropTable($tableName);
                 $this->conn->query("DELETE FROM `information_schema`.`columns` WHERE table_schema = '{$databaseName}' AND table_name = '{$tableName}'");
-
             break;
         }
     }
@@ -930,10 +877,5 @@ trait FpdoStatementTrait
                 $informationSchemaTable->populate();
             }            
         }
-    
-    
     }
-
-
-
 }
