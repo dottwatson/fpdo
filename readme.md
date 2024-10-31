@@ -178,6 +178,7 @@ class Greetings extends QueryFunctionsEvaluator {
 }
 ```
 adding it in the config/fpdo.php
+
 ```php
 <?php
 return [
@@ -191,19 +192,16 @@ return [
 ```
 and its usage
 ```sql
-SELECT table.*,GREETINGS(table.name) as greetings FROM table 
+SELECT table.*,GREETINGS(table.name) as greetings FROM table
 ```
 
-Here's the translation with corrected syntax:
-
----
 
 ## Configuration
 
 To have the configuration file in the `config` folder of your application:
 
 ```bash
-php artisan vendor:publish --provider="Fpdo\FpdoServiceProvider" --tag=config
+php artisan vendor:publish --provider="Fpdo\FpdoServiceProvider" --tag=fpdo-config
 ```
 
 Below is a table describing the parameters:
@@ -222,7 +220,7 @@ Below is a table describing the parameters:
 | long_write_time    | int        | Expressed in seconds. Set to -1 to log each write operation's time to save tables.                                                                                                                                                                                                                                                                                                |
 | extensions         | array      | Extend fpdo with your custom function set. Use class names.
 
-That's it!
 
+That's it!
 
 If you like this package, consider to buy me a ☕[coffee](https://www.paypal.com/donate/?business=RVJ6GPQ6JFR98&no_recurring=0&item_name=Thank%20you%20for%20your%20support!%20If,%20like%20me,%20you%20believe%20in%20the%20opensource,%20this%20will%20help%20us%20make%20it%20even%20more%20exciting.&currency_code=EUR)
