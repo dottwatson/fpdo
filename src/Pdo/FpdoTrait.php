@@ -54,7 +54,7 @@ trait FpdoTrait{
         $dsn        = "fpdo:host=127.0.0.1;dbname=information_schema;";
         $instance   = new static($dsn,Str::random(8),Str::random(8),[]);
 
-        $queriesLines = file(__DIR__.'/../../resources/information_schema.stub');
+        $queriesLines = file(__DIR__.'/../../stubs/information_schema.stub');
 
         $queries = [];
         $query = '';

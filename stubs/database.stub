@@ -1,0 +1,26 @@
+<?php
+namespace {{ namespace }};
+
+use Fpdo\Definitions\Database as FpdoDatabaseDefinition;
+
+class {{ class }} extends FpdoDatabaseDefinition{
+
+    public $name            = '{{ name }}';
+    protected $collation    = 'utf8mb4_unicode_ci';
+    protected $prefix       = '';
+    protected $prefix_index = true;
+    protected $strict       = true;
+    protected $options      = [];
+
+    public function tables()
+    {
+        return [
+
+            //This is an example table class and how to register it in the database
+            {{ exampletable }}
+
+            //register your tables classes here
+        
+        ];
+    }
+}

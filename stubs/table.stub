@@ -1,0 +1,24 @@
+<?php
+namespace {{ namespace }};
+
+use Fpdo\Definitions\Table;
+use Illuminate\Database\Schema\Blueprint;
+
+class {{ class }} extends Table {
+    protected $name = '{{ name }}';
+
+    public function define(Blueprint $table)
+    {
+        //here define the table structure with blueprint
+    }
+
+    protected function reader()
+    {
+        //here your data acquisition logic
+    }
+
+    protected function writer(array $data = null)
+    {
+        //here your data wrinting logic
+    }
+}
